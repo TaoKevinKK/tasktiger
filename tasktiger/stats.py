@@ -1,19 +1,16 @@
 import threading
 import time
-from typing import TYPE_CHECKING, Optional
+import logging
+from typing import Optional
 
-from ._internal import g_fork_lock
 
-if TYPE_CHECKING:
-    from .worker import Worker
-
+logger = logging.getLogger(__name__)
 
 class StatsThread(threading.Thread):
-    def __init__(self, tiger: "Worker") -> None:
+    def __init__(self, stats_interval: int) -> None:
         super(StatsThread, self).__init__()
-        self.tiger = tiger
         self._stop_event = threading.Event()
-
+        self.stats_interval = stats_interval
         self._task_running = False
         self._time_start = time.monotonic()
         self._time_busy: float = 0.0
@@ -56,16 +53,12 @@ class StatsThread(threading.Thread):
 
         if time_total:
             utilization = 100.0 / time_total * time_busy
-            with g_fork_lock:
-                self.tiger.log.info(
-                    "stats",
-                    time_total=time_total,
-                    time_busy=time_busy,
-                    utilization=utilization,
-                )
+            logger.info(
+                f"stats, time_total={time_total}, time_busy={time_busy}, utilization={utilization}"
+            )
 
     def run(self) -> None:
-        while not self._stop_event.wait(self.tiger.config["STATS_INTERVAL"]):
+        while not self._stop_event.wait(self.stats_interval):
             self.compute_stats()
 
     def stop(self) -> None:

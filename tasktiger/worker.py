@@ -326,13 +326,13 @@ class Worker:
         )
 
         for (queue, task_id) in task_data:
-            self.log.debug("expiring task", queue=queue, task_id=task_id)
+            self.log.info(f"expiring task, queue={queue}, task_id={task_id}")
             self._did_work = True
             try:
                 task = Task.from_id(self.tiger, queue, ACTIVE, task_id)
                 if task.should_retry_on(JobTimeoutException, logger=self.log):
                     self.log.info(
-                        "queueing expired task", queue=queue, task_id=task_id
+                        f"queueing expired task, queue={queue}, task_id={task_id}"
                     )
 
                     # Task is idempotent and can be requeued. If the task
@@ -343,7 +343,7 @@ class Worker:
                     )
                 else:
                     self.log.error(
-                        "failing expired task", queue=queue, task_id=task_id
+                        f"failing expired task, queue={queue}, task_id={task_id}"
                     )
 
                     # Assume the task can't be retried and move it to the error
@@ -355,7 +355,7 @@ class Worker:
 
                 # XXX: Ideally, the following block should be atomic.
                 if not self.connection.get(self._key("task", task_id)):
-                    self.log.error("not found", queue=queue, task_id=task_id)
+                    self.log.error(f"not found, queue={queue}, task_id={task_id}")
                     task = Task(
                         self.tiger,
                         queue=queue,
@@ -444,7 +444,7 @@ class Worker:
             acquired, locks = queue_lock.acquire()
             if not acquired:
                 return None, True
-            log.debug("acquired queue lock", locks=locks)
+            log.info(f"acquired queue lock, locks={locks}")
         else:
             queue_lock = None
 
@@ -479,7 +479,7 @@ class Worker:
                     if batch_exit > start_time + timeout:
                         batch_exit = start_time + timeout
                 self._queue_set.add(queue)
-                self.log.debug("new queue", queue=queue)
+                self.log.info(f"new queue, queue={queue}")
 
         return new_queue_found, batch_exit
 
@@ -999,14 +999,11 @@ class Worker:
         """
 
         self.log.info(
-            "ready",
-            id=self.id,
-            queues=sorted(self.only_queues),
-            exclude_queues=sorted(self.exclude_queues),
-            single_worker_queues=sorted(self.single_worker_queues),
-            max_workers=self.max_workers_per_queue,
-            executor=self.executor.__class__.__name__,
-            exit_after=str(exit_after) if exit_after else None,
+            f"ready, id={self.id}, queues={sorted(self.only_queues)}, 
+            exclude_queues={sorted(self.exclude_queues)}, 
+            single_worker_queues={sorted(self.single_worker_queues)}, 
+            max_workers={self.max_workers_per_queue}, executor={self.executor.__class__.__name__}, 
+            exit_after={str(exit_after) if exit_after else None}"
         )
 
         if exit_after:
@@ -1021,13 +1018,15 @@ class Worker:
             # executing pipelines.
             self.log.warning("using old Redis version")
 
-        if self.config["STATS_INTERVAL"]:
-            stats_thread = StatsThread(self)
+        stats_interval = self.config["STATS_INTERVAL"]
+        if stats_interval:
+            stats_thread = StatsThread(stats_interval)
             self.stats_thread = stats_thread
             stats_thread.start()
+            self.log.info(f"stats thread started, interval={stats_interval}")
 
         # Queue any periodic tasks that are not queued yet.
-        self._queue_periodic_tasks()
+        # self._queue_periodic_tasks()
 
         # First scan all the available queues for new items until they're empty.
         # Then, listen to the activity channel.
