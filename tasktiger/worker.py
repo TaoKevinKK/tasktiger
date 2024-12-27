@@ -78,7 +78,7 @@ class Worker:
         )
         self.scripts = RedisScripts(self.connection)
         self.config = config
-        self._key = "redis_key"
+        self.redis_prefix = config["REDIS_PREFIX"]
         self._did_work = True
         self._last_task_check = 0.0
         self.stats_thread: Optional[StatsThread] = None
@@ -236,7 +236,7 @@ class Worker:
         """
         if not self._did_work:
             time.sleep(self.config["POLL_TASK_QUEUES_INTERVAL"])
-        self._refresh_queue_set()
+        self._load_consumer_job_queue()
 
     def _pubsub_for_queues(
         self, timeout: float = 0, batch_timeout: float = 0
@@ -887,7 +887,8 @@ class Worker:
         * Move any scheduled items from the scheduled queue to the queued
           queue.
         """
-
+        
+        # 只有一个queue, 优先获取优先级高的任务.
         queues = list(self._queue_set)
         random.shuffle(queues)
 
@@ -909,6 +910,9 @@ class Worker:
             self._worker_queue_scheduled_tasks()
             self._worker_queue_expired_tasks()
             self._last_task_check = time.time()
+
+    def _key(self, *parts: str) -> str:
+        return ":".join([self.redis_prefix] + list(parts))
 
     def _queue_periodic_tasks(self) -> None:
         # Only queue periodic tasks for queues this worker is responsible
@@ -949,7 +953,7 @@ class Worker:
                 "queued periodic task", func=task.serialized_func, when=when
             )
 
-    def _refresh_queue_set(self) -> None:
+    def _load_consumer_job_queue(self) -> None:
         self._queue_set = set(
             self._filter_queues(self._retrieve_queues(self._key(QUEUED)))
         )
@@ -1039,7 +1043,8 @@ class Worker:
             assert self._pubsub is not None
             self._pubsub.subscribe(self._key("activity"))
 
-        self._refresh_queue_set()
+        # load consumer queues
+        self._load_consumer_job_queue()
 
         try:
             while True:
