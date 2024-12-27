@@ -401,7 +401,6 @@ class Worker:
         self,
         queue: str,
         job: Task,
-        queue_lock: Optional[Semaphore],
     ) -> bool:
     
         log: BoundLogger = self.log.bind(queue=queue)
