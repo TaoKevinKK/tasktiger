@@ -4,6 +4,7 @@ import json
 import os
 import random
 import signal
+import logging
 import sys
 import time
 import uuid
@@ -22,6 +23,7 @@ from typing import (
     Union,
 )
 
+import redis
 from redis.client import PubSub
 from redis.exceptions import LockError
 from structlog.stdlib import BoundLogger
@@ -39,6 +41,7 @@ from ._internal import (
 )
 from .exceptions import StopRetry, TaskImportError, TaskNotFound
 from .executor import Executor, ForkExecutor
+from .redis_scripts import RedisScripts
 from .redis_semaphore import Semaphore
 from .runner import get_runner_class
 from .stats import StatsThread
@@ -57,7 +60,7 @@ __all__ = ["Worker"]
 class Worker:
     def __init__(
         self,
-        tiger: "TaskTiger",
+        config:Optional[Dict] = None,
         queues: Optional[List[str]] = None,
         exclude_queues: Optional[List[str]] = None,
         single_worker_queues: Optional[List[str]] = None,
@@ -68,16 +71,14 @@ class Worker:
         """
         Internal method to initialize a worker.
         """
+        self.log = logging.getLogger(__name__)
 
-        self.tiger = tiger
-        bound_logger = tiger.log.bind(pid=os.getpid())
-        assert isinstance(bound_logger, BoundLogger)
-        self.log = bound_logger
-
-        self.connection = tiger.connection
-        self.scripts = tiger.scripts
-        self.config = tiger.config
-        self._key = tiger._key
+        self.connection = redis.Redis(
+            decode_responses=True
+        )
+        self.scripts = RedisScripts(self.connection)
+        self.config = config
+        self._key = "redis_key"
         self._did_work = True
         self._last_task_check = 0.0
         self.stats_thread: Optional[StatsThread] = None
@@ -131,6 +132,7 @@ class Worker:
         # A worker group is a group of workers that process the same set of
         # queues. This allows us to use worker group-specific locks to reduce
         # Redis load.
+        # 工作组
         self.worker_group_name = hashlib.sha256(
             json.dumps(
                 [sorted(self.only_queues), sorted(self.exclude_queues)]
@@ -173,6 +175,7 @@ class Worker:
             )
         ]
 
+    # SCHEDULED -> QUEUED
     def _worker_queue_scheduled_tasks(self) -> None:
         """
         Helper method that takes due tasks from the SCHEDULED queue and puts
@@ -215,7 +218,7 @@ class Worker:
                     self._key(QUEUED),
                 ),
             )
-            self.log.debug("scheduled tasks", queue=queue, qty=len(result))
+            self.log.info(f"scheduled tasks queue {queue} qty={len(result)}")
             # XXX: ideally this would be in the same pipeline, but we only want
             # to announce if there was a result.
             if result:
@@ -1069,7 +1072,7 @@ class Worker:
             pass
 
         except Exception:
-            self.log.exception(event="exception")
+            self.log.exception("exception")
             raise
 
         finally:
